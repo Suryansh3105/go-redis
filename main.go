@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -17,12 +18,14 @@ const (
 	BULK   ValueType = "$"
 	STRING ValueType = "+"
 	ERROR  ValueType = "-"
+	NULL   ValueType = ""
 )
 
 type Value struct {
 	typ   ValueType
 	bulk  string
 	str   string
+	err   string
 	array []Value
 }
 
@@ -90,6 +93,7 @@ func main() {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
+	writer := NewWriter(conn)
 	for {
 		v := Value{typ: ARRAY}
 		err := v.readArray(reader)
@@ -97,9 +101,57 @@ func main() {
 			fmt.Println("read error", err)
 			return
 		}
+		handle(writer, &v)
 
 		fmt.Println(v.array)
-		conn.Write([]byte("+OK\r\n"))
 	}
 
+}
+
+type Handler func(*Value) *Value
+
+var Handlers = map[string]Handler{}
+
+func handle(w *Writer, v *Value) {
+	if len(v.array) == 0 {
+		w.write(&Value{typ: ERROR, err: "empty command"})
+		return
+	}
+	cmd := v.array[0].bulk
+	handler, ok := Handlers[cmd]
+	if !ok {
+		w.write(&Value{typ: ERROR, err: "unknown command '" + cmd + "'"})
+		return
+	}
+	reply := handler(v)
+
+	w.write(reply)
+}
+
+type Writer struct {
+	writer *bufio.Writer
+}
+
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{writer: bufio.NewWriter(w)}
+}
+
+func (w *Writer) write(v *Value) error {
+	var reply string
+	switch v.typ {
+	case STRING:
+		reply = fmt.Sprintf("%s%s\r\n", v.typ, v.str)
+	case BULK:
+		reply = fmt.Sprintf("%s%d\r\n%s\r\n", v.typ, len(v.bulk), v.bulk)
+	case ERROR:
+		reply = fmt.Sprintf("%s%s\r\n", v.typ, v.err)
+	case NULL:
+		reply = "$-1\r\n"
+	}
+
+	_, err := w.writer.Write([]byte(reply))
+	if err != nil {
+		return err
+	}
+	return w.writer.Flush()
 }
