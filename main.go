@@ -110,7 +110,12 @@ func main() {
 
 type Handler func(*Value) *Value
 
-var Handlers = map[string]Handler{}
+var Handlers = map[string]Handler{
+	"GET": get,
+	"SET": set,
+}
+
+var DB = map[string]string{}
 
 func handle(w *Writer, v *Value) {
 	if len(v.array) == 0 {
@@ -126,6 +131,32 @@ func handle(w *Writer, v *Value) {
 	reply := handler(v)
 
 	w.write(reply)
+}
+
+func get(v *Value) *Value {
+	args := v.array[1:]
+	if len(args) != 1 {
+		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'GET' command"}
+	}
+	name := args[0].bulk
+	val, ok := DB[name]
+	if !ok {
+		return &Value{typ: NULL}
+	}
+	return &Value{typ: BULK, bulk: val}
+}
+
+func set(v *Value) *Value {
+	args := v.array[1:]
+	if len(args) != 2 {
+		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'SET' command"}
+	}
+
+	key := args[0].bulk
+	val := args[1].bulk
+	DB[key] = val
+
+	return &Value{typ: STRING, str: "OK"}
 }
 
 type Writer struct {
